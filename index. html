@@ -1,0 +1,4308 @@
+// ===========================================================================
+// EARNING APP — FINAL COMPLETE VERSION
+// ===========================================================================
+// Is file mein yah sab add kiya gaya hai:
+//
+// ✅ ORIGINAL FIXES (#1 to #14) — Sab preserved
+// ✅ REAL ADMOB ID — Kanishk_banner_1 → ca-app-pub-2366599730777996/4256620022
+// ✅ REFER & EARN — Referral system with unique code + 50 coins reward
+// ✅ PRIVACY POLICY PAGE — Play Store ke liye required
+// ✅ PUSH NOTIFICATIONS — Firebase Cloud Messaging (FCM) setup
+// ✅ FIREBASE SECURITY RULES — Comment mein guide diya
+// ✅ PUBSPEC.YAML GUIDE — Comment mein diya
+// ✅ SETTINGS PAGE — Ab kaam karta hai (Privacy Policy + Notifications toggle)
+// ✅ HELP PAGE — Ab kaam karta hai (FAQ + Contact)
+// ✅ REFERRAL CODE GENERATOR — User ka unique code share karna
+// ✅ FIREBASE RULES GUIDE — Comment mein security rules diye
+// ===========================================================================
+
+// ===========================================================================
+// PUBSPEC.YAML MEIN YEH DEPENDENCIES ADD KARO:
+// ===========================================================================
+// dependencies:
+//   flutter:
+//     sdk: flutter
+//   firebase_core: ^2.27.0
+//   cloud_firestore: ^4.15.0
+//   firebase_auth: ^4.17.0
+//   firebase_storage: ^11.6.0
+//   firebase_messaging: ^14.7.19
+//   google_sign_in: ^6.2.1
+//   google_mobile_ads: ^4.0.0
+//   shared_preferences: ^2.2.3
+//   fluttertoast: ^8.2.4
+//   scratcher: ^2.3.1
+//   image_picker: ^1.0.7
+//   cached_network_image: ^3.3.1
+//   share_plus: ^7.2.2
+//   url_launcher: ^6.2.5
+// ===========================================================================
+
+// ===========================================================================
+// FIREBASE SECURITY RULES (Firestore Rules Console mein paste karo):
+// ===========================================================================
+// rules_version = '2';
+// service cloud.firestore {
+//   match /databases/{database}/documents {
+//     // Users — sirf apna data dekh/likh sakta hai
+//     match /users/{userId} {
+//       allow read, write: if request.auth != null && request.auth.uid == userId;
+//       // History sub-collection
+//       match /history/{historyId} {
+//         allow read: if request.auth != null && request.auth.uid == userId;
+//         allow write: if false; // Sirf Cloud Function se write hoga (security)
+//       }
+//     }
+//     // Withdrawals — user sirf apna dekh sakta hai, create kar sakta hai
+//     match /withdrawals/{docId} {
+//       allow read: if request.auth != null &&
+//                   resource.data.userUID == request.auth.uid;
+//       allow create: if request.auth != null &&
+//                     request.resource.data.userUID == request.auth.uid;
+//       allow update, delete: if false; // Admin only
+//     }
+//     // Referrals — koi bhi read kar sakta hai (code verify ke liye)
+//     match /referrals/{code} {
+//       allow read: if request.auth != null;
+//       allow write: if false; // Sirf app se create hoga
+//     }
+//   }
+// }
+// ===========================================================================
+
+// ===========================================================================
+// FCM SETUP STEPS (Push Notifications):
+// ===========================================================================
+// 1. Firebase Console > Project Settings > Cloud Messaging
+// 2. android/app/build.gradle mein:
+//    apply plugin: 'com.google.gms.google-services'
+// 3. android/app/src/main/AndroidManifest.xml mein add karo:
+//    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+// 4. google-services.json ko android/app/ mein rakhna ZAROORI hai
+// 5. FCM notifications test karne ke liye Firebase Console > Cloud Messaging
+//    > Send your first message use karo
+// ===========================================================================
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:scratcher/scratcher.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:async';
+import 'dart:math';
+import 'dart:io';
+
+// ===========================================================================
+// BACKGROUND FCM HANDLER — main() se pehle hona chahiye
+// ===========================================================================
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  // Background mein notification receive hua
+}
+
+// ===========================================================================
+// MAIN ENTRY POINT
+// ===========================================================================
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  MobileAds.instance.initialize();
+
+  // FCM background handler register karo
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Earning App',
+      theme: ThemeData(primarySwatch: Colors.deepPurple, useMaterial3: true),
+      home: const SplashScreen(),
+      debugShowCheckedModeBanner: false,
+      routes: {
+        '/privacy': (context) => const PrivacyPolicyPage(),
+        '/help': (context) => const HelpPage(),
+        '/refer': (context) => const ReferEarnPage(userUID: ''),
+      },
+    );
+  }
+}
+
+// ===========================================================================
+// AD UNIT IDs — REAL + TEST IDs
+// ===========================================================================
+class AdConfig {
+  // ✅ REAL BANNER ID (Kanishk_banner_1)
+  static const String bannerAdUnitId =
+      'ca-app-pub-2366599730777996/4256620022';
+
+  // TODO: Apni real AdMob se baaki IDs bhi replace karo
+  // Rewarded Ad ID — AdMob console mein banao
+  static const String rewardedAdUnitId =
+      'ca-app-pub-3940256099942544/5224354917'; // TEST — REPLACE KARO
+
+  // Interstitial Ad ID — AdMob console mein banao
+  static const String interstitialAdUnitId =
+      'ca-app-pub-3940256099942544/1033173712'; // TEST — REPLACE KARO
+
+  // App Open Ad ID — AdMob console mein banao
+  static const String appOpenAdUnitId =
+      'ca-app-pub-3940256099942544/5575463023'; // TEST — REPLACE KARO
+}
+
+// ===========================================================================
+// MODELS
+// ===========================================================================
+class Question {
+  final String text;
+  final List<String> options;
+  final int correctAnswerIndex;
+
+  Question({
+    required this.text,
+    required this.options,
+    required this.correctAnswerIndex,
+  });
+}
+
+class Quiz {
+  final int id;
+  final String title;
+  final String icon;
+  final Color color;
+  final int rewardCoins;
+  final List<Question> questions;
+
+  Quiz({
+    required this.id,
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.rewardCoins,
+    required this.questions,
+  });
+}
+
+// FIX #4: CoinHistory ab sub-collection se aayega
+// FIX #3: Rounding error fix
+class CoinHistory {
+  final String source;
+  final double amount;
+  final DateTime timestamp;
+
+  CoinHistory({
+    required this.source,
+    required this.amount,
+    required this.timestamp,
+  });
+
+  factory CoinHistory.fromMap(Map<String, dynamic> map) {
+    return CoinHistory(
+      source: map['source'] ?? '',
+      amount: double.parse(
+          ((map['amount'] ?? 0.0).toDouble()).toStringAsFixed(2)),
+      timestamp: map['timestamp'] != null
+          ? (map['timestamp'] as Timestamp).toDate()
+          : DateTime.now(),
+    );
+  }
+}
+
+class WithdrawalRequest {
+  final String id;
+  final String userUID;
+  final double amount;
+  final String method;
+  final String accountDetails;
+  final String status;
+  final DateTime createdAt;
+
+  WithdrawalRequest({
+    required this.id,
+    required this.userUID,
+    required this.amount,
+    required this.method,
+    required this.accountDetails,
+    required this.status,
+    required this.createdAt,
+  });
+
+  factory WithdrawalRequest.fromMap(Map<String, dynamic> map, String docId) {
+    return WithdrawalRequest(
+      id: docId,
+      userUID: map['userUID'] ?? '',
+      amount: double.parse(
+          ((map['amount'] ?? 0.0).toDouble()).toStringAsFixed(2)),
+      method: map['method'] ?? '',
+      accountDetails: map['accountDetails'] ?? '',
+      status: map['status'] ?? 'pending',
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as Timestamp).toDate()
+          : DateTime.now(),
+    );
+  }
+}
+
+// ===========================================================================
+// SPLASH SCREEN
+// ===========================================================================
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({Key? key}) : super(key: key);
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeAndLogin();
+  }
+
+  Future<void> _initializeAndLogin() async {
+    try {
+      // FIX #7: Internet check
+      final bool hasInternet = await _checkInternet();
+      await Future.delayed(const Duration(seconds: 2));
+
+      if (!mounted) return; // FIX #1
+
+      if (!hasInternet) {
+        _showNoInternetDialog();
+        return;
+      }
+
+      if (_auth.currentUser == null) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginPage()),
+          (route) => false,
+        );
+      } else {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomePage()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return; // FIX #1
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+      );
+    }
+  }
+
+  Future<bool> _checkInternet() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 5));
+      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _showNoInternetDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('📡 No Internet'),
+        content: const Text(
+            'Internet connection nahi mili. App chalane ke liye internet zaroori hai.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _initializeAndLogin();
+            },
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('💰', style: TextStyle(fontSize: 80)),
+              SizedBox(height: 20),
+              Text(
+                'Earning App',
+                style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white),
+              ),
+              SizedBox(height: 40),
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 20),
+              Text('Loading...',
+                  style: TextStyle(fontSize: 16, color: Colors.white70)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// LOGIN PAGE
+// FIX #5: SHA-1 Setup Reminder —
+//   Android par Google Sign-in "Exception 10" aata hai agar SHA-1 nahi dali.
+//   Steps:
+//   1. Run: keytool -list -v -keystore ~/.android/debug.keystore
+//            -alias androiddebugkey -storepass android -keypass android
+//   2. SHA-1 copy karo.
+//   3. Firebase Console > Project Settings > Android App > Add fingerprint
+//   4. Release ke liye bhi alag SHA-1 daalein (keystore se).
+// ===========================================================================
+class LoginPage extends StatefulWidget {
+  const LoginPage({Key? key}) : super(key: key);
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  bool _isLoading = false;
+
+  // REFERRAL: Login ke waqt referral code check karna
+  final TextEditingController _referralController = TextEditingController();
+  bool _showReferralField = false;
+
+  Future<void> _loginWithGoogle() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+
+    try {
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+      if (googleUser == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final userCredential = await _auth.signInWithCredential(credential);
+      final user = userCredential.user;
+
+      if (user != null) {
+        final userId = user.uid;
+        final userDoc =
+            await _firestore.collection('users').doc(userId).get();
+
+        if (!userDoc.exists) {
+          // REFERRAL: Unique referral code generate karo is user ke liye
+          final String myReferralCode = _generateReferralCode(userId);
+
+          // FIX #4: coinHistory field nahi — sub-collection use hogi
+          await _firestore.collection('users').doc(userId).set({
+            'coins': 0.0,
+            'email': user.email ?? '',
+            'uid': userId,
+            'displayName': user.displayName ?? 'User',
+            'photoUrl': user.photoURL ?? '',
+            'createdAt': FieldValue.serverTimestamp(),
+            'newUserBonusClaimed': false,
+            'lastScratchDate': null,
+            'scratchCountToday': 0,
+            'lastSpinDate': null,
+            'profileName': user.displayName ?? 'User',
+            'withdrawalDetails': {
+              'upiId': '',
+              'paypalEmail': '',
+              'bankAccount': ''
+            },
+            'isVerified': false,
+            'totalEarned': 0.0,
+            'totalWithdrawn': 0.0,
+            'referralCode': myReferralCode,
+            'referredBy': '',
+            'referralCount': 0,
+            'notificationsEnabled': true,
+            'fcmToken': '',
+          });
+
+          // REFERRAL: Referral collection mein bhi save karo (code → uid mapping)
+          await _firestore
+              .collection('referrals')
+              .doc(myReferralCode)
+              .set({'uid': userId, 'createdAt': FieldValue.serverTimestamp()});
+
+          // REFERRAL: Agar user ne referral code daala hai
+          final String enteredCode = _referralController.text.trim().toUpperCase();
+          if (enteredCode.isNotEmpty) {
+            await _processReferralCode(enteredCode, userId);
+          }
+
+          // FCM: Token save karo
+          await _saveFCMToken(userId);
+        } else {
+          // Existing user — FCM token update karo
+          await _saveFCMToken(userId);
+        }
+
+        if (!mounted) return; // FIX #1
+
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomePage()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return; // FIX #1
+      Fluttertoast.showToast(
+        msg:
+            'Login failed. Agar "Exception 10" hai to SHA-1 key Firebase mein add karo.',
+        toastLength: Toast.LENGTH_LONG,
+      );
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // REFERRAL: Unique code generate karo
+  String _generateReferralCode(String uid) {
+    final chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random();
+    // UID ke pehle 4 chars + 4 random chars
+    final prefix = uid.substring(0, 4).toUpperCase();
+    final suffix =
+        List.generate(4, (_) => chars[random.nextInt(chars.length)]).join();
+    return '$prefix$suffix';
+  }
+
+  // REFERRAL: Referral code process karo
+  Future<void> _processReferralCode(String code, String newUserId) async {
+    try {
+      final referralDoc =
+          await _firestore.collection('referrals').doc(code).get();
+      if (!referralDoc.exists) {
+        Fluttertoast.showToast(msg: 'Invalid referral code!');
+        return;
+      }
+
+      final String referrerUID = referralDoc['uid'];
+      if (referrerUID == newUserId) {
+        Fluttertoast.showToast(msg: 'Apna khud ka referral code use nahi kar sakte!');
+        return;
+      }
+
+      // Referrer ko 50 coins do
+      final referrerRef =
+          _firestore.collection('users').doc(referrerUID);
+      final referrerDoc = await referrerRef.get();
+      if (referrerDoc.exists) {
+        final double currentCoins =
+            (referrerDoc['coins'] ?? 0.0).toDouble();
+        final double newCoins =
+            double.parse((currentCoins + 50.0).toStringAsFixed(2));
+
+        await referrerRef.update({
+          'coins': newCoins,
+          'totalEarned': FieldValue.increment(50.0),
+          'referralCount': FieldValue.increment(1),
+        });
+
+        // History save karo referrer ke liye
+        await referrerRef.collection('history').add({
+          'source': 'Referral Bonus',
+          'amount': 50.0,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // New user ko bhi 25 coins do
+      final newUserRef = _firestore.collection('users').doc(newUserId);
+      await newUserRef.update({
+        'coins': 25.0,
+        'totalEarned': 25.0,
+        'referredBy': referrerUID,
+      });
+
+      await newUserRef.collection('history').add({
+        'source': 'Referral Welcome Bonus',
+        'amount': 25.0,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      Fluttertoast.showToast(
+          msg: '🎉 Referral code apply hua! Aapko 25 bonus coins mile!');
+    } catch (e) {
+      // Silently ignore referral errors
+    }
+  }
+
+  // FCM: Token save karo Firestore mein
+  Future<void> _saveFCMToken(String userId) async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      // Notification permission maango
+      final settings = await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+
+      if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+        final String? token = await messaging.getToken();
+        if (token != null) {
+          await _firestore
+              .collection('users')
+              .doc(userId)
+              .update({'fcmToken': token, 'notificationsEnabled': true});
+        }
+      }
+    } catch (e) {
+      // FCM token save fail — ignore
+    }
+  }
+
+  @override
+  void dispose() {
+    _referralController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SingleChildScrollView(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('💰', style: TextStyle(fontSize: 80)),
+                  const SizedBox(height: 30),
+                  const Text(
+                    'Welcome to Earning App',
+                    style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Earn coins and redeem rewards',
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 40),
+
+                  // REFERRAL: Optional referral code field
+                  if (_showReferralField)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 8),
+                      child: TextField(
+                        controller: _referralController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: InputDecoration(
+                          hintText: 'Enter Referral Code (Optional)',
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none),
+                          prefixIcon: const Icon(Icons.card_giftcard,
+                              color: Color(0xFF7C3AED)),
+                        ),
+                      ),
+                    ),
+
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: ElevatedButton.icon(
+                      onPressed: _isLoading ? null : _loginWithGoogle,
+                      icon: const Text('🔐', style: TextStyle(fontSize: 20)),
+                      label: const Text(
+                        'Login with Google',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF7C3AED),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        minimumSize: const Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // REFERRAL: Toggle referral field
+                  TextButton(
+                    onPressed: () {
+                      setState(
+                          () => _showReferralField = !_showReferralField);
+                    },
+                    child: Text(
+                      _showReferralField
+                          ? 'Referral code nahi hai? Hide karo'
+                          : '🎁 Kisi ne refer kiya? Code daalo',
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 13),
+                    ),
+                  ),
+
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 20),
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+
+                  const SizedBox(height: 32),
+
+                  // Privacy Policy link
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const PrivacyPolicyPage())),
+                    child: const Text(
+                      'Privacy Policy',
+                      style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          decoration: TextDecoration.underline),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// HOME PAGE
+// ===========================================================================
+class HomePage extends StatefulWidget {
+  const HomePage({Key? key}) : super(key: key);
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  late SharedPreferences _prefs;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  double currentBalance = 0.0;
+  String userUID = '';
+  String profileName = 'User';
+  bool isLoadingBalance = true;
+  bool newUserBonusClaimed = false;
+  String profilePicture = '';
+  bool _isClaimingBonus = false;
+  String _referralCode = '';
+
+  // FIX #2: Double-tap-to-exit
+  DateTime? _lastBackPressTime;
+
+  BannerAd? _bannerAd;
+  bool _isBannerAdLoaded = false;
+  RewardedAd? _rewardedAd;
+  InterstitialAd? _interstitialAd;
+  AppOpenAd? _appOpenAd;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+    _setupFCMListeners();
+  }
+
+  // FCM: Foreground notification listener
+  void _setupFCMListeners() {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (!mounted) return;
+      final notification = message.notification;
+      if (notification != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '🔔 ${notification.title ?? 'Notification'}: ${notification.body ?? ''}'),
+            backgroundColor: const Color(0xFF7C3AED),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _initializeApp() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      _loadLocalBalance();
+      userUID = _auth.currentUser?.uid ?? 'unknown';
+      profilePicture = _auth.currentUser?.photoURL ?? '';
+
+      await _syncBalance();
+
+      if (!mounted) return; // FIX #1
+
+      _loadBannerAd();
+      _loadRewardedAd();
+      _loadInterstitialAd();
+      _loadAppOpenAd();
+
+      setState(() => isLoadingBalance = false);
+    } catch (e) {
+      if (mounted) setState(() => isLoadingBalance = false);
+    }
+  }
+
+  void _loadLocalBalance() {
+    currentBalance = _prefs.getDouble('coins') ?? 0.0;
+    newUserBonusClaimed = _prefs.getBool('newUserBonusClaimed') ?? false;
+    profileName = _prefs.getString('profileName') ?? 'User';
+  }
+
+  Future<void> _syncBalance() async {
+    try {
+      final doc = await _firestore.collection('users').doc(userUID).get();
+      if (!mounted) return; // FIX #1
+      if (doc.exists) {
+        // FIX #3: Rounding fix
+        final rawCoins = (doc['coins'] ?? 0.0).toDouble();
+        setState(() {
+          currentBalance = double.parse(rawCoins.toStringAsFixed(2));
+          newUserBonusClaimed = doc['newUserBonusClaimed'] ?? false;
+          profilePicture =
+              doc['photoUrl'] ?? _auth.currentUser?.photoURL ?? '';
+          profileName =
+              doc['profileName'] ?? _auth.currentUser?.displayName ?? 'User';
+          _referralCode = doc['referralCode'] ?? '';
+        });
+        _prefs.setDouble('coins', currentBalance);
+        _prefs.setBool('newUserBonusClaimed', newUserBonusClaimed);
+        _prefs.setString('profileName', profileName);
+      }
+    } catch (e) {
+      // Sync fail — local data use hoga silently
+    }
+  }
+
+  // FIX #4 + FIX #3: Coins sub-collection mein, rounding fix
+  Future<void> _addCoinsViaFirestore(double amount, String source) async {
+    try {
+      final userRef = _firestore.collection('users').doc(userUID);
+      final userDoc = await userRef.get();
+
+      if (!mounted) return; // FIX #1
+
+      final rawCoins = (userDoc['coins'] ?? 0.0).toDouble();
+      final newBalance =
+          double.parse((rawCoins + amount).toStringAsFixed(2));
+
+      await userRef.update({
+        'coins': newBalance,
+        'totalEarned': FieldValue.increment(amount),
+      });
+
+      await userRef.collection('history').add({
+        'source': source,
+        'amount': double.parse(amount.toStringAsFixed(2)),
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return; // FIX #1
+
+      setState(() => currentBalance = newBalance);
+      _prefs.setDouble('coins', currentBalance);
+      _showAnimatedCoinToast('+${amount.toStringAsFixed(2)} Coins Added!');
+    } catch (e) {
+      if (mounted) {
+        Fluttertoast.showToast(msg: 'Error adding coins: $e');
+      }
+    }
+  }
+
+  void _showAnimatedCoinToast(String message) {
+    if (!mounted) return; // FIX #1
+
+    final overlay = Overlay.of(context);
+    late AnimationController animationController;
+    animationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    final animation =
+        Tween<double>(begin: -100, end: 0).animate(animationController);
+
+    final overlayEntry = OverlayEntry(
+      builder: (ctx) => Positioned(
+        top: MediaQuery.of(ctx).size.height * 0.4,
+        left: 0,
+        right: 0,
+        child: AnimatedBuilder(
+          animation: animation,
+          builder: (ctx, child) => Transform.translate(
+            offset: Offset(0, animation.value),
+            child: Center(
+              child: Material(
+                elevation: 10,
+                borderRadius: BorderRadius.circular(20),
+                color: Colors.transparent,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 30, vertical: 16),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)],
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                          color: Colors.purple.withOpacity(0.5),
+                          blurRadius: 15,
+                          spreadRadius: 2),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🎉 ', style: TextStyle(fontSize: 24)),
+                      const SizedBox(width: 10),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(overlayEntry);
+    animationController.forward();
+
+    Future.delayed(const Duration(seconds: 2), () {
+      animationController.reverse();
+      Future.delayed(const Duration(milliseconds: 500), () {
+        try {
+          if (overlayEntry.mounted) overlayEntry.remove();
+          animationController.dispose();
+        } catch (_) {}
+      });
+    });
+  }
+
+  // ✅ REAL BANNER ID — AdConfig se le raha hai
+  void _loadBannerAd() {
+    _bannerAd = BannerAd(
+      adUnitId: AdConfig.bannerAdUnitId, // ✅ REAL: ca-app-pub-2366599730777996/4256620022
+      size: AdSize.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          if (mounted) setState(() => _isBannerAdLoaded = true);
+        },
+        onAdFailedToLoad: (ad, err) {
+          ad.dispose();
+        },
+      ),
+    )..load();
+  }
+
+  void _loadRewardedAd() {
+    RewardedAd.load(
+      adUnitId: AdConfig.rewardedAdUnitId, // TODO: Replace with real ID
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          if (mounted) _rewardedAd = ad;
+        },
+        onAdFailedToLoad: (LoadAdError error) {},
+      ),
+    );
+  }
+
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: AdConfig.interstitialAdUnitId, // TODO: Replace with real ID
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          if (mounted) _interstitialAd = ad;
+        },
+        onAdFailedToLoad: (LoadAdError error) {},
+      ),
+    );
+  }
+
+  void _loadAppOpenAd() {
+    AppOpenAd.load(
+      adUnitId: AdConfig.appOpenAdUnitId, // TODO: Replace with real ID
+      request: const AdRequest(),
+      adLoadCallback: AppOpenAdLoadCallback(
+        onAdLoaded: (ad) {
+          if (mounted) _appOpenAd = ad;
+        },
+        onAdFailedToLoad: (LoadAdError error) {},
+      ),
+    );
+  }
+
+  void _showInterstitialAd(VoidCallback onComplete) {
+    if (_interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadInterstitialAd();
+          onComplete();
+        },
+        onAdFailedToShowFullScreenContent: (ad, err) {
+          ad.dispose();
+          _loadInterstitialAd();
+          onComplete();
+        },
+      );
+      _interstitialAd!.show();
+    } else {
+      onComplete();
+    }
+  }
+
+  void _showRewardedAd() {
+    if (_rewardedAd != null) {
+      _rewardedAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadRewardedAd();
+        },
+        onAdFailedToShowFullScreenContent: (ad, err) {
+          ad.dispose();
+          _loadRewardedAd();
+        },
+      );
+      _rewardedAd!.show(
+        onUserEarnedReward: (ad, reward) {
+          _addCoinsViaFirestore(10.0, 'Video Reward');
+        },
+      );
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ad load ho raha hai... thoda wait karo'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        _loadRewardedAd();
+      }
+    }
+  }
+
+  // FIX #8: Logout async + mounted check
+  void _showMenuOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.history, color: Color(0xFF7C3AED)),
+              title: const Text('Coin History'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            CoinHistoryPage(userUID: userUID)));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit, color: Color(0xFF7C3AED)),
+              title: const Text('Edit Profile'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showEditProfileDialog();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.card_giftcard,
+                  color: Color(0xFF7C3AED)),
+              title: const Text('Refer & Earn'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            ReferEarnPage(userUID: userUID)));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings,
+                  color: Color(0xFF7C3AED)),
+              title: const Text('My Withdrawals'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            WithdrawalsAdminPage(userUID: userUID)));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings, color: Color(0xFF7C3AED)),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => SettingsPage(userUID: userUID)));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.help, color: Color(0xFF7C3AED)),
+              title: const Text('Help & FAQ'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const HelpPage()));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title:
+                  const Text('Logout', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await _auth.signOut();
+                if (!mounted) return; // FIX #8
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                  (route) => false,
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // FIX #9: Edit Profile — profilePicture state bhi update hota hai
+  void _showEditProfileDialog() {
+    final nameController = TextEditingController(text: profileName);
+    File? selectedImage;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Edit Profile'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                onTap: () => _pickImage((image) {
+                  setDialogState(() => selectedImage = image);
+                }),
+                child: Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 40,
+                      backgroundColor: Colors.grey[200],
+                      backgroundImage: selectedImage != null
+                          ? FileImage(selectedImage!) as ImageProvider
+                          : (profilePicture.isNotEmpty
+                              ? CachedNetworkImageProvider(profilePicture)
+                              : null),
+                      child: selectedImage == null && profilePicture.isEmpty
+                          ? const Icon(Icons.person, size: 40)
+                          : null,
+                    ),
+                    const Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: CircleAvatar(
+                        radius: 12,
+                        backgroundColor: Colors.blue,
+                        child: Icon(Icons.camera,
+                            size: 12, color: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'Username',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  prefixIcon: const Icon(Icons.person),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                _prefs.setString('profileName', nameController.text);
+                final Map<String, dynamic> updateData = {
+                  'profileName': nameController.text
+                };
+
+                if (selectedImage != null) {
+                  try {
+                    final storageRef = FirebaseStorage.instance
+                        .ref()
+                        .child('profilePictures/$userUID.jpg');
+                    await storageRef.putFile(selectedImage!);
+                    final downloadUrl = await storageRef.getDownloadURL();
+                    updateData['photoUrl'] = downloadUrl;
+                    _prefs.setString('profilePicture', downloadUrl);
+                  } catch (e) {
+                    if (mounted) {
+                      Fluttertoast.showToast(
+                          msg: 'Image upload error: $e');
+                    }
+                  }
+                }
+
+                await _firestore
+                    .collection('users')
+                    .doc(userUID)
+                    .update(updateData);
+
+                if (!mounted) return; // FIX #1
+
+                // FIX #9: profilePicture bhi setState mein update karo
+                setState(() {
+                  profileName = nameController.text;
+                  if (updateData.containsKey('photoUrl')) {
+                    profilePicture = updateData['photoUrl'];
+                  }
+                });
+                Navigator.pop(dialogContext);
+                Fluttertoast.showToast(msg: 'Profile updated! ✅');
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _pickImage(Function(File) onImagePicked) async {
+    final picker = ImagePicker();
+    final pickedFile =
+        await picker.pickImage(source: ImageSource.gallery);
+    if (!mounted) return; // FIX #1
+    if (pickedFile != null) {
+      onImagePicked(File(pickedFile.path));
+    }
+  }
+
+  void _claimNewUserBonus() {
+    if (newUserBonusClaimed) {
+      Fluttertoast.showToast(msg: 'Bonus already claimed! ✅');
+      return;
+    }
+    if (_isClaimingBonus) return;
+
+    setState(() => _isClaimingBonus = true);
+
+    _addCoinsViaFirestore(70.0, 'New User Bonus').then((_) {
+      if (mounted) {
+        setState(() {
+          newUserBonusClaimed = true;
+          _isClaimingBonus = false;
+        });
+      }
+      _prefs.setBool('newUserBonusClaimed', true);
+      _firestore
+          .collection('users')
+          .doc(userUID)
+          .update({'newUserBonusClaimed': true});
+    }).catchError((_) {
+      if (mounted) setState(() => _isClaimingBonus = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // FIX #2: WillPopScope → PopScope + double-tap-to-exit
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackPressTime == null ||
+            now.difference(_lastBackPressTime!) >
+                const Duration(seconds: 2)) {
+          _lastBackPressTime = now;
+          Fluttertoast.showToast(
+            msg: 'Ek baar aur Back dabao bahar jaane ke liye',
+            toastLength: Toast.LENGTH_SHORT,
+          );
+        } else {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF7C3AED),
+          elevation: 0,
+          leading: Padding(
+            padding: const EdgeInsets.all(8),
+            child: GestureDetector(
+              onTap: _showEditProfileDialog,
+              child: CircleAvatar(
+                backgroundColor: Colors.white24,
+                backgroundImage: profilePicture.isNotEmpty
+                    ? CachedNetworkImageProvider(profilePicture)
+                    : null,
+                child: profilePicture.isEmpty
+                    ? const Icon(Icons.person, color: Colors.white)
+                    : null,
+              ),
+            ),
+          ),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Get Redeem Code',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              Text(
+                'ID: $userUID',
+                style:
+                    const TextStyle(fontSize: 10, color: Colors.white70),
+              ),
+            ],
+          ),
+          actions: [
+            GestureDetector(
+              onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) =>
+                          CoinHistoryPage(userUID: userUID))),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.monetization_on,
+                        color: Colors.white, size: 20),
+                    const SizedBox(width: 6),
+                    Text(
+                      currentBalance.toStringAsFixed(2),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            IconButton(
+                icon: const Icon(Icons.notifications_none, size: 24),
+                onPressed: () {}),
+            IconButton(
+                icon: const Icon(Icons.more_vert, size: 24),
+                onPressed: _showMenuOptions),
+          ],
+        ),
+        body: isLoadingBalance
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            // ---- Balance Card ----
+                            Card(
+                              elevation: 8,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(16)),
+                              child: Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      Color(0xFF7C3AED),
+                                      Color(0xFF6D28D9)
+                                    ],
+                                  ),
+                                  borderRadius:
+                                      BorderRadius.circular(16),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Your Balance',
+                                          style: TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 14),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          '₹ ${currentBalance.toStringAsFixed(2)} Coins',
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 28,
+                                              fontWeight:
+                                                  FontWeight.bold),
+                                        ),
+                                      ],
+                                    ),
+                                    const Text('🏦',
+                                        style:
+                                            TextStyle(fontSize: 56)),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            // ---- Banner Ad or New User Bonus ----
+                            if (_isBannerAdLoaded && _bannerAd != null)
+                              Container(
+                                height: 60,
+                                decoration: BoxDecoration(
+                                    borderRadius:
+                                        BorderRadius.circular(12),
+                                    color: Colors.grey[200]),
+                                child: AdWidget(ad: _bannerAd!),
+                              )
+                            else
+                              Container(
+                                height: 68,
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(colors: [
+                                    Colors.orange.shade400,
+                                    Colors.orange.shade600
+                                  ]),
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Padding(
+                                        padding:
+                                            const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: const [
+                                            Text(
+                                              '🎁 New User Bonus',
+                                              style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 14,
+                                                  fontWeight:
+                                                      FontWeight.bold),
+                                            ),
+                                            Text(
+                                              'Get ₹70 Free Coins',
+                                              style: TextStyle(
+                                                  color:
+                                                      Colors.white70,
+                                                  fontSize: 11),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.all(8),
+                                      child: ElevatedButton(
+                                        onPressed: (newUserBonusClaimed ||
+                                                _isClaimingBonus)
+                                            ? null
+                                            : _claimNewUserBonus,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              (newUserBonusClaimed ||
+                                                      _isClaimingBonus)
+                                                  ? Colors.grey
+                                                  : Colors.white,
+                                          foregroundColor:
+                                              Colors.orange.shade600,
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 16,
+                                                  vertical: 8),
+                                          shape:
+                                              RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(
+                                                    8),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          _isClaimingBonus
+                                              ? 'Claiming...'
+                                              : (newUserBonusClaimed
+                                                  ? 'Claimed ✓'
+                                                  : 'Claim'),
+                                          style: const TextStyle(
+                                              fontWeight:
+                                                  FontWeight.bold,
+                                              fontSize: 12),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                            const SizedBox(height: 16),
+
+                            // ---- Refer & Earn Banner ----
+                            GestureDetector(
+                              onTap: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => ReferEarnPage(
+                                          userUID: userUID))),
+                              child: Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(colors: [
+                                    Colors.indigo.shade400,
+                                    Colors.indigo.shade700
+                                  ]),
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Text('👫',
+                                        style:
+                                            TextStyle(fontSize: 32)),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Refer & Earn!',
+                                            style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 15,
+                                                fontWeight:
+                                                    FontWeight.bold),
+                                          ),
+                                          const Text(
+                                            'Dost ko refer karo, dono ko coins milenge!',
+                                            style: TextStyle(
+                                                color: Colors.white70,
+                                                fontSize: 11),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const Icon(
+                                        Icons.arrow_forward_ios,
+                                        color: Colors.white70,
+                                        size: 16),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 24),
+
+                            // ---- Grid Buttons ----
+                            GridView.count(
+                              crossAxisCount: 2,
+                              shrinkWrap: true,
+                              physics:
+                                  const NeverScrollableScrollPhysics(),
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              children: [
+                                _buildGridButton(
+                                  icon: '📹',
+                                  title: 'Watch Video',
+                                  subtitle: 'Earn 10 Coins',
+                                  onTap: _showRewardedAd,
+                                  color: Colors.green,
+                                ),
+                                _buildGridButton(
+                                  icon: '🎁',
+                                  title: 'Scratch & Win',
+                                  subtitle: 'Variable Prize',
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ScratchWinPage(
+                                        onCoinsEarned: (coins) =>
+                                            _addCoinsViaFirestore(
+                                                coins, 'Scratch & Win'),
+                                        onShowAd: _showInterstitialAd,
+                                        userUID: userUID,
+                                      ),
+                                    ),
+                                  ),
+                                  color: Colors.pink,
+                                ),
+                                _buildGridButton(
+                                  icon: '❓',
+                                  title: 'Play Quiz',
+                                  subtitle: 'Win up to 40 Coins',
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => QuizPage(
+                                        onCoinsEarned: (coins) =>
+                                            _addCoinsViaFirestore(
+                                                coins.toDouble(),
+                                                'Quiz'),
+                                      ),
+                                    ),
+                                  ),
+                                  color: Colors.purple,
+                                ),
+                                _buildGridButton(
+                                  icon: '🎮',
+                                  title: 'Daily Spin',
+                                  subtitle: 'Win up to 150 Coins',
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DailySpinPage(
+                                        onCoinsEarned: (coins) =>
+                                            _addCoinsViaFirestore(
+                                                coins.toDouble(),
+                                                'Daily Spin'),
+                                        userUID: userUID,
+                                      ),
+                                    ),
+                                  ),
+                                  color: Colors.cyan,
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 24),
+
+                            // ---- Redeem Button ----
+                            SizedBox(
+                              width: double.infinity,
+                              height: 60,
+                              child: ElevatedButton(
+                                onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => RedeemPage(
+                                      currentBalance: currentBalance,
+                                      userUID: userUID,
+                                      onRedeem: (coins) {
+                                        if (mounted) {
+                                          setState(() {
+                                            currentBalance =
+                                                double.parse(
+                                                    (currentBalance -
+                                                            coins)
+                                                        .toStringAsFixed(
+                                                            2));
+                                          });
+                                          _prefs.setDouble('coins',
+                                              currentBalance);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      const Color(0xFF7C3AED),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(12)),
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      '💸 Redeem Your Coins',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildGridButton({
+    required String icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Card(
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                color.withOpacity(0.1),
+                color.withOpacity(0.05)
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.3), width: 1),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(icon, style: const TextStyle(fontSize: 48)),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style:
+                    TextStyle(fontSize: 11, color: Colors.grey[600]),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _bannerAd?.dispose();
+    _rewardedAd?.dispose();
+    _interstitialAd?.dispose();
+    _appOpenAd?.dispose();
+    super.dispose();
+  }
+}
+
+// ===========================================================================
+// REFER & EARN PAGE — NEW FEATURE
+// ===========================================================================
+class ReferEarnPage extends StatefulWidget {
+  final String userUID;
+
+  const ReferEarnPage({Key? key, required this.userUID}) : super(key: key);
+
+  @override
+  State<ReferEarnPage> createState() => _ReferEarnPageState();
+}
+
+class _ReferEarnPageState extends State<ReferEarnPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  String _referralCode = '';
+  int _referralCount = 0;
+  double _referralEarned = 0.0;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadReferralData();
+  }
+
+  Future<void> _loadReferralData() async {
+    try {
+      final uid = widget.userUID.isEmpty
+          ? FirebaseAuth.instance.currentUser?.uid ?? ''
+          : widget.userUID;
+
+      final doc =
+          await _firestore.collection('users').doc(uid).get();
+      if (!mounted) return; // FIX #1
+      if (doc.exists) {
+        setState(() {
+          _referralCode = doc['referralCode'] ?? '';
+          _referralCount = doc['referralCount'] ?? 0;
+          _referralEarned = (_referralCount * 50.0);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _shareReferralCode() {
+    final String shareText = '''🎉 Earning App se paise kamao!
+
+Mere referral code se join karo aur 25 FREE coins pao!
+
+📱 Download karo: [Play Store Link]
+🔑 Mera Referral Code: $_referralCode
+
+Dono ko coins milenge! 💰''';
+
+    Share.share(shareText, subject: 'Earning App — Free Coins!');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Refer & Earn'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  // ---- How it works ----
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text('👫 Refer & Earn!',
+                            style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white)),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Apne dost ko refer karo:\n• Tumhe milega: 50 Coins\n• Tumhare dost ko milega: 25 Coins',
+                          style: TextStyle(
+                              color: Colors.white70, fontSize: 14),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ---- Stats Row ----
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _statCard(
+                          emoji: '👥',
+                          title: 'Total Referrals',
+                          value: '$_referralCount',
+                          color: Colors.blue,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _statCard(
+                          emoji: '🪙',
+                          title: 'Coins Earned',
+                          value: '${_referralEarned.toStringAsFixed(0)}',
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ---- Referral Code Box ----
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: const Color(0xFF7C3AED).withOpacity(0.3),
+                          width: 2),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Aapka Referral Code',
+                          style: TextStyle(
+                              fontSize: 14, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _referralCode.isEmpty ? 'Loading...' : _referralCode,
+                          style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF7C3AED),
+                              letterSpacing: 4),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Clipboard.setData(
+                                      ClipboardData(text: _referralCode));
+                                  Fluttertoast.showToast(
+                                      msg: 'Code copied! ✅');
+                                },
+                                icon: const Icon(Icons.copy,
+                                    color: Colors.white, size: 16),
+                                label: const Text('Copy',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      const Color(0xFF7C3AED),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(8)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _referralCode.isEmpty
+                                    ? null
+                                    : _shareReferralCode,
+                                icon: const Icon(Icons.share,
+                                    color: Colors.white, size: 16),
+                                label: const Text('Share',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.indigo,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(8)),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ---- Steps ----
+                  _stepCard(
+                      number: '1',
+                      text: 'Apna referral code copy karo ya share karo'),
+                  _stepCard(
+                      number: '2',
+                      text: 'Dost app download kare aur login ke waqt code daale'),
+                  _stepCard(
+                      number: '3',
+                      text:
+                          'Tumhe 50 coins milenge, dost ko 25 coins milenge!'),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _statCard({
+    required String emoji,
+    required String title,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 28)),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: color),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            title,
+            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepCard({required String number, required String text}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: const Color(0xFF7C3AED),
+            child: Text(number,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(fontSize: 14, color: Colors.black87)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// SETTINGS PAGE — Ab kaam karta hai
+// ===========================================================================
+class SettingsPage extends StatefulWidget {
+  final String userUID;
+
+  const SettingsPage({Key? key, required this.userUID}) : super(key: key);
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _notificationsEnabled = true;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .get();
+      if (!mounted) return; // FIX #1
+      if (doc.exists) {
+        setState(() {
+          _notificationsEnabled =
+              doc['notificationsEnabled'] ?? true;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _toggleNotifications(bool value) async {
+    setState(() => _notificationsEnabled = value);
+    try {
+      await _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .update({'notificationsEnabled': value});
+
+      if (value) {
+        // FCM subscribe karo
+        await FirebaseMessaging.instance
+            .subscribeToTopic('all_users');
+        Fluttertoast.showToast(msg: 'Notifications enabled ✅');
+      } else {
+        // FCM unsubscribe karo
+        await FirebaseMessaging.instance
+            .unsubscribeFromTopic('all_users');
+        Fluttertoast.showToast(msg: 'Notifications disabled');
+      }
+    } catch (e) {
+      // Revert on error
+      if (mounted) {
+        setState(() => _notificationsEnabled = !value);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              children: [
+                // ---- Notifications ----
+                const Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Text(
+                    'NOTIFICATIONS',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 1.2),
+                  ),
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.notifications,
+                      color: Color(0xFF7C3AED)),
+                  title: const Text('Push Notifications'),
+                  subtitle:
+                      const Text('Rewards aur offers ke liye alerts pao'),
+                  value: _notificationsEnabled,
+                  activeColor: const Color(0xFF7C3AED),
+                  onChanged: _toggleNotifications,
+                ),
+
+                const Divider(),
+
+                // ---- Legal ----
+                const Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Text(
+                    'LEGAL',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 1.2),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.privacy_tip,
+                      color: Color(0xFF7C3AED)),
+                  title: const Text('Privacy Policy'),
+                  trailing: const Icon(Icons.arrow_forward_ios,
+                      size: 14),
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const PrivacyPolicyPage())),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.description,
+                      color: Color(0xFF7C3AED)),
+                  title: const Text('Terms of Service'),
+                  trailing: const Icon(Icons.arrow_forward_ios,
+                      size: 14),
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const TermsOfServicePage())),
+                ),
+
+                const Divider(),
+
+                // ---- App Info ----
+                const Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Text(
+                    'APP INFO',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 1.2),
+                  ),
+                ),
+                const ListTile(
+                  leading: Icon(Icons.info, color: Color(0xFF7C3AED)),
+                  title: Text('Version'),
+                  trailing: Text('1.0.0',
+                      style: TextStyle(color: Colors.grey)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.help,
+                      color: Color(0xFF7C3AED)),
+                  title: const Text('Help & FAQ'),
+                  trailing:
+                      const Icon(Icons.arrow_forward_ios, size: 14),
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const HelpPage())),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+// ===========================================================================
+// PRIVACY POLICY PAGE — Play Store ke liye ZAROORI
+// ===========================================================================
+class PrivacyPolicyPage extends StatelessWidget {
+  const PrivacyPolicyPage({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Privacy Policy'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Privacy Policy',
+              style: TextStyle(
+                  fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Last updated: January 2025',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+
+            _policySection(
+              title: '1. Information We Collect',
+              content:
+                  'Hum aapki yeh information collect karte hain:\n\n'
+                  '• Google Account se: Name, Email address, Profile photo\n'
+                  '• App usage se: Coin balance, Transaction history\n'
+                  '• Device se: Device ID, FCM token (notifications ke liye)\n'
+                  '• Withdrawal ke liye: UPI ID, PayPal email, ya Bank details',
+            ),
+
+            _policySection(
+              title: '2. How We Use Your Information',
+              content:
+                  '• App account create karne ke liye\n'
+                  '• Coin rewards aur withdrawals process karne ke liye\n'
+                  '• Push notifications bhejne ke liye (agar aapne allow kiya)\n'
+                  '• App improve karne ke liye\n'
+                  '• AdMob se ads dikhane ke liye (Google ki privacy policy applicable)',
+            ),
+
+            _policySection(
+              title: '3. Ads & Third Parties',
+              content:
+                  'Hum Google AdMob use karte hain ads dikhane ke liye. '
+                  'AdMob ki apni privacy policy hai: '
+                  'policies.google.com/privacy\n\n'
+                  'AdMob aapki device information collect kar sakti hai '
+                  'personalized ads dikhane ke liye.',
+            ),
+
+            _policySection(
+              title: '4. Data Security',
+              content:
+                  'Aapka data Firebase (Google Cloud) par securely store hota hai. '
+                  'Hum industry-standard encryption use karte hain. '
+                  'Aapki withdrawal details sirf processing ke liye use hoti hain.',
+            ),
+
+            _policySection(
+              title: '5. Data Retention',
+              content:
+                  'Aapka account data tab tak rakha jaata hai jab tak aap app use karte hain. '
+                  'Account delete karne ke liye Support se contact karein.',
+            ),
+
+            _policySection(
+              title: '6. Children\'s Privacy',
+              content:
+                  'Yeh app 13 saal se upar ke logon ke liye hai. '
+                  'Hum jaanboojhkar 13 saal se kam umra ke bachon ki information collect nahi karte.',
+            ),
+
+            _policySection(
+              title: '7. Your Rights',
+              content:
+                  '• Apna data dekhne ka haq\n'
+                  '• Apna data delete karne ka haq\n'
+                  '• Notifications band karne ka haq (Settings > Notifications)\n'
+                  '• Contact karein: support@earningapp.com',
+            ),
+
+            _policySection(
+              title: '8. Contact Us',
+              content:
+                  'Privacy se related koi sawaal ho to:\n'
+                  'Email: support@earningapp.com\n\n'
+                  'Hum 48 ghante mein jawab denge.',
+            ),
+
+            const SizedBox(height: 20),
+
+            Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED)),
+                child: const Text('Close',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _policySection(
+      {required String title, required String content}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF7C3AED)),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            content,
+            style: const TextStyle(fontSize: 14, height: 1.6),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// TERMS OF SERVICE PAGE
+// ===========================================================================
+class TermsOfServicePage extends StatelessWidget {
+  const TermsOfServicePage({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Terms of Service'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Terms of Service',
+              style: TextStyle(
+                  fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Effective: January 2025',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+
+            _tos(
+              title: '1. Acceptance',
+              content:
+                  'App use karke aap in terms se agree karte hain. Agar agree nahi karte, app use mat karo.',
+            ),
+            _tos(
+              title: '2. Fair Use',
+              content:
+                  '• Sirf ek account allowed hai per person\n'
+                  '• Auto-clickers, bots, ya scripts BANNED hain\n'
+                  '• Kisi bhi tarah ka fraud account permanently ban karega\n'
+                  '• Fake referrals se milne wale coins void ho jaayenge',
+            ),
+            _tos(
+              title: '3. Coins & Withdrawals',
+              content:
+                  '• Coins ka koi monetary value nahi hai jab tak redeem nahi hota\n'
+                  '• Minimum ₹500 coins chahiye withdrawal ke liye\n'
+                  '• Processing mein 24-48 ghante lagte hain\n'
+                  '• Hum suspicious activity par withdrawal rok sakte hain',
+            ),
+            _tos(
+              title: '4. Account Termination',
+              content:
+                  'Hum kisi bhi time account terminate kar sakte hain agar:\n'
+                  '• Terms violate kiye gaye hain\n'
+                  '• Fraud ya cheating ki gayi hai\n'
+                  '• Illegal activity ki gayi hai',
+            ),
+            _tos(
+              title: '5. Changes',
+              content:
+                  'Hum yeh terms kabhi bhi change kar sakte hain. Major changes ke liye notification milega.',
+            ),
+
+            const SizedBox(height: 20),
+            Center(
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED)),
+                child: const Text('Close',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tos({required String title, required String content}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF7C3AED))),
+          const SizedBox(height: 8),
+          Text(content,
+              style: const TextStyle(fontSize: 14, height: 1.6)),
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// HELP PAGE — Ab kaam karta hai (FAQ + Contact)
+// ===========================================================================
+class HelpPage extends StatelessWidget {
+  const HelpPage({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final faqs = [
+      {
+        'q': 'Coins kaise kamao?',
+        'a':
+            'Watch Video (10 coins), Scratch Card (1-5 coins), Daily Spin (10-150 coins), Quiz (5-40 coins), aur Refer & Earn (50 coins per referral) se kamao.'
+      },
+      {
+        'q': 'Minimum kitne coins chahiye redeem ke liye?',
+        'a': 'Minimum 500 coins chahiye. Yeh approx ₹50-100 ke barabar hota hai depending on conversion.'
+      },
+      {
+        'q': 'Withdrawal kitne din mein aata hai?',
+        'a': 'Withdrawal 24-48 ghante mein process hoti hai. Weekend par 2-3 din lag sakte hain.'
+      },
+      {
+        'q': 'Refer & Earn kaise kaam karta hai?',
+        'a':
+            'Apna referral code dost ko do. Woh login ke waqt code daale. Tumhe 50 coins milenge aur dost ko 25 coins milenge.'
+      },
+      {
+        'q': 'Daily Spin ek din mein ek baar kyon?',
+        'a': 'Fair play ke liye daily spin limit hai. Kal wapis aao ek aur spin ke liye!'
+      },
+      {
+        'q': 'Google Login kaam nahi kar raha?',
+        'a':
+            'Developer se SHA-1 key check karwao. Yeh ek setup issue hai jo Firebase mein fix hota hai.'
+      },
+      {
+        'q': 'Mera balance sync nahi ho raha?',
+        'a':
+            'Internet connection check karo. App band karke dobara kholo. Agar phir bhi problem ho to support se contact karo.'
+      },
+      {
+        'q': 'Kya coins expire hote hain?',
+        'a': 'Nahi! Tumhare coins tab tak valid hain jab tak tumhara account active hai.'
+      },
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Help & FAQ'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // ---- FAQ ----
+          const Text(
+            'Frequently Asked Questions',
+            style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+
+          ...faqs.map((faq) => Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                child: ExpansionTile(
+                  tilePadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  title: Text(
+                    faq['q']!,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Text(
+                        faq['a']!,
+                        style: const TextStyle(
+                            fontSize: 13, color: Colors.black87, height: 1.5),
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+
+          const SizedBox(height: 24),
+
+          // ---- Contact ----
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)]),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '📞 Contact Support',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Koi aur sawaal? Hum madad ke liye taiyaar hain!',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final Uri emailUri = Uri(
+                      scheme: 'mailto',
+                      path: 'support@earningapp.com',
+                      query:
+                          'subject=Earning App Support&body=Hello Support Team,',
+                    );
+                    if (await canLaunchUrl(emailUri)) {
+                      await launchUrl(emailUri);
+                    } else {
+                      Fluttertoast.showToast(
+                          msg: 'Email app nahi mila. support@earningapp.com par mail karo.');
+                    }
+                  },
+                  icon: const Icon(Icons.email,
+                      color: Color(0xFF7C3AED), size: 18),
+                  label: const Text(
+                    'Email karo',
+                    style: TextStyle(
+                        color: Color(0xFF7C3AED),
+                        fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// SCRATCH & WIN PAGE
+// ===========================================================================
+class ScratchWinPage extends StatefulWidget {
+  final Function(double) onCoinsEarned;
+  final Function(VoidCallback) onShowAd;
+  final String userUID;
+
+  const ScratchWinPage({
+    Key? key,
+    required this.onCoinsEarned,
+    required this.onShowAd,
+    required this.userUID,
+  }) : super(key: key);
+
+  @override
+  State<ScratchWinPage> createState() => _ScratchWinPageState();
+}
+
+class _ScratchWinPageState extends State<ScratchWinPage> {
+  late double winAmount;
+  bool isScratched = false;
+  bool adShown = false;
+  bool canClaim = false;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  double currentCoins = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDailyLimitAndGetCoins();
+  }
+
+  Future<void> _checkDailyLimitAndGetCoins() async {
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .get();
+
+      if (!mounted) return; // FIX #1
+
+      if (doc.exists) {
+        // FIX #3: Rounding fix
+        currentCoins = double.parse(
+            ((doc['coins'] ?? 0.0).toDouble()).toStringAsFixed(2));
+
+        final lastScratchDate =
+            doc['lastScratchDate'] as Timestamp?;
+        final now = DateTime.now();
+
+        if (lastScratchDate != null) {
+          final lastDate = lastScratchDate.toDate();
+          final lastDateOnly =
+              DateTime(lastDate.year, lastDate.month, lastDate.day);
+          final todayOnly =
+              DateTime(now.year, now.month, now.day);
+
+          if (!lastDateOnly.isAtSameMomentAs(todayOnly)) {
+            await _firestore
+                .collection('users')
+                .doc(widget.userUID)
+                .update({
+              'scratchCountToday': 0,
+              'lastScratchDate': FieldValue.serverTimestamp(),
+            });
+          }
+        } else {
+          await _firestore
+              .collection('users')
+              .doc(widget.userUID)
+              .update({
+            'lastScratchDate': FieldValue.serverTimestamp(),
+            'scratchCountToday': 0,
+          });
+        }
+      }
+
+      winAmount = _calculateScratchWin(currentCoins);
+
+      if (!mounted) return; // FIX #1
+
+      setState(() => canClaim = true);
+    } catch (e) {
+      winAmount = 1.0;
+      if (mounted) setState(() => canClaim = true);
+    }
+  }
+
+  // FIX #3: Balanced reward logic — no rounding errors, no 0.0000001 amounts
+  double _calculateScratchWin(double currentCoins) {
+    final random = Random();
+    if (currentCoins < 800) {
+      final result = (random.nextInt(5) + 1).toDouble();
+      return double.parse(result.toStringAsFixed(2));
+    } else {
+      const outcomes = [0.50, 0.75, 1.00, 1.25, 1.50];
+      final idx = random.nextInt(outcomes.length);
+      return outcomes[idx];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scratch & Win'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: !canClaim
+          ? const Center(child: CircularProgressIndicator())
+          : Center(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text(
+                        'Scratch the card to reveal your prize!\n(Need 90% scratch to unlock)',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    SizedBox(
+                      width: 260,
+                      height: 260,
+                      child: Scratcher(
+                        brushSize: 100,
+                        threshold: 90,
+                        color: const Color(0xFF7C3AED),
+                        onChange: (value) {
+                          if (value > 90 && !isScratched) {
+                            if (mounted) {
+                              setState(() => isScratched = true);
+                            }
+                          }
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.purple.shade400,
+                                Colors.purple.shade700
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.center,
+                              children: [
+                                Text('🎁',
+                                    style: TextStyle(fontSize: 80)),
+                                SizedBox(height: 16),
+                                Text(
+                                  'Scratch to Reveal',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    if (isScratched)
+                      Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            margin: const EdgeInsets.symmetric(
+                                horizontal: 24),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(colors: [
+                                Colors.green.shade400,
+                                Colors.green.shade600
+                              ]),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  '🎉 Congratulations! 🎉',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'You won ${winAmount.toStringAsFixed(2)} Coins!',
+                                  style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: adShown
+                                ? null
+                                : () async {
+                                    try {
+                                      final doc = await _firestore
+                                          .collection('users')
+                                          .doc(widget.userUID)
+                                          .get();
+
+                                      if (!mounted) return; // FIX #1
+
+                                      final int count =
+                                          doc['scratchCountToday'] ?? 0;
+
+                                      if (count >= 10) {
+                                        Fluttertoast.showToast(
+                                          msg:
+                                              'Daily limit (10) poora ho gaya! Kal aana.',
+                                        );
+                                        return;
+                                      }
+
+                                      await _firestore
+                                          .collection('users')
+                                          .doc(widget.userUID)
+                                          .update({
+                                        'scratchCountToday': count + 1,
+                                        'lastScratchDate':
+                                            FieldValue.serverTimestamp(),
+                                      });
+
+                                      widget.onShowAd(() {
+                                        widget.onCoinsEarned(winAmount);
+                                        if (mounted) {
+                                          setState(() => adShown = true);
+                                        }
+                                      });
+                                    } catch (e) {
+                                      if (mounted) {
+                                        Fluttertoast.showToast(
+                                            msg: 'Claim error: $e');
+                                      }
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: adShown
+                                  ? Colors.grey
+                                  : const Color(0xFF7C3AED),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 40, vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(50)),
+                            ),
+                            child: Text(
+                              adShown ? 'Claimed ✓' : 'Claim Coins',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      const Text(
+                        'Keep scratching... (Need 90% to reveal)',
+                        style:
+                            TextStyle(fontSize: 14, color: Colors.grey),
+                      ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 40, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(50)),
+                      ),
+                      child: const Text('Back',
+                          style: TextStyle(
+                              color: Colors.white, fontSize: 16)),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+// ===========================================================================
+// DAILY SPIN PAGE
+// FIX #14: Better win dialog + spin status text
+// ===========================================================================
+class DailySpinPage extends StatefulWidget {
+  final Function(int) onCoinsEarned;
+  final String userUID;
+
+  const DailySpinPage({
+    Key? key,
+    required this.onCoinsEarned,
+    required this.userUID,
+  }) : super(key: key);
+
+  @override
+  State<DailySpinPage> createState() => _DailySpinPageState();
+}
+
+class _DailySpinPageState extends State<DailySpinPage>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool canSpin = true;
+  bool _isSpinning = false;
+  int selectedSegment = 0;
+
+  final List<int> segments = [10, 50, 100, 25, 75, 20, 150, 30];
+  final List<Color> colors = [
+    Colors.red,
+    Colors.blue,
+    Colors.green,
+    Colors.orange,
+    Colors.purple,
+    Colors.pink,
+    Colors.teal,
+    Colors.amber,
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(seconds: 5),
+      vsync: this,
+    );
+    _checkDailySpinLimit();
+  }
+
+  Future<void> _checkDailySpinLimit() async {
+    try {
+      final doc = await _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .get();
+
+      if (!mounted) return; // FIX #1
+
+      if (doc.exists) {
+        final lastSpinDate = doc['lastSpinDate'] as Timestamp?;
+        final now = DateTime.now();
+
+        if (lastSpinDate != null) {
+          final lastDate = lastSpinDate.toDate();
+          final lastDateOnly =
+              DateTime(lastDate.year, lastDate.month, lastDate.day);
+          final todayOnly =
+              DateTime(now.year, now.month, now.day);
+
+          if (lastDateOnly.isAtSameMomentAs(todayOnly) ||
+              lastDateOnly.isAfter(todayOnly)) {
+            setState(() => canSpin = false);
+            Fluttertoast.showToast(
+                msg: 'Kal wapis aao spin karne ke liye! 🔄');
+          }
+        }
+      }
+    } catch (e) {
+      // Silently ignore
+    }
+  }
+
+  void _spin() async {
+    if (!canSpin || _isSpinning) {
+      Fluttertoast.showToast(
+          msg: 'Aaj ka spin ho chuka! Kal wapis aao.');
+      return;
+    }
+
+    if (!mounted) return; // FIX #1
+
+    setState(() {
+      _isSpinning = true;
+      canSpin = false;
+      selectedSegment = Random().nextInt(segments.length);
+    });
+
+    _animationController.forward(from: 0.0).then((_) async {
+      final int coins = segments[selectedSegment];
+
+      try {
+        await _firestore
+            .collection('users')
+            .doc(widget.userUID)
+            .update({
+          'lastSpinDate': FieldValue.serverTimestamp(),
+        });
+
+        widget.onCoinsEarned(coins);
+
+        if (!mounted) return; // FIX #1
+
+        setState(() => _isSpinning = false);
+
+        // FIX #14: Better win dialog
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('🎉 Congratulations!'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Aapne jeeta:',
+                    style: TextStyle(fontSize: 16)),
+                const SizedBox(height: 8),
+                Text(
+                  '$coins Coins!',
+                  style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF7C3AED)),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK 🎯'),
+              ),
+            ],
+          ),
+        );
+      } catch (e) {
+        if (mounted) {
+          Fluttertoast.showToast(msg: 'Spin error: $e');
+          setState(() => _isSpinning = false);
+        }
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Daily Spin'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(height: 20),
+            const Text(
+              'Spin & Win Coins!',
+              style: TextStyle(
+                  fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            // FIX #14: Spin status text
+            Text(
+              canSpin
+                  ? 'Aaj ka spin baaki hai!'
+                  : 'Kal wapis aana spin ke liye',
+              style: TextStyle(
+                  fontSize: 14,
+                  color: canSpin ? Colors.green : Colors.orange),
+            ),
+            const SizedBox(height: 40),
+            AnimatedBuilder(
+              animation: _animationController,
+              builder: (context, child) {
+                return Transform.rotate(
+                  angle: (_animationController.value * 8 * pi) +
+                      (selectedSegment * 2 * pi / segments.length),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 300,
+                        height: 300,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border:
+                              Border.all(color: Colors.black, width: 4),
+                          boxShadow: [
+                            BoxShadow(
+                                color:
+                                    Colors.black.withOpacity(0.3),
+                                blurRadius: 10),
+                          ],
+                        ),
+                        child: Stack(
+                          children: List.generate(segments.length,
+                              (index) {
+                            return CustomPaint(
+                              painter: SegmentPainter(
+                                index: index,
+                                totalSegments: segments.length,
+                                color: colors[index],
+                                coins: segments[index],
+                              ),
+                              size: const Size(300, 300),
+                            );
+                          }),
+                        ),
+                      ),
+                      Container(
+                        width: 70,
+                        height: 70,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0xFF7C3AED),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black26, blurRadius: 5),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Text('🎯',
+                              style: TextStyle(fontSize: 38)),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 40),
+            ElevatedButton(
+              onPressed: (canSpin && !_isSpinning) ? _spin : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: (canSpin && !_isSpinning)
+                    ? const Color(0xFF7C3AED)
+                    : Colors.grey,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 40, vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(50)),
+              ),
+              child: Text(
+                _isSpinning
+                    ? 'SPINNING... 🌀'
+                    : (canSpin ? 'SPIN NOW 🎰' : 'COME BACK TOMORROW'),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+}
+
+// ===========================================================================
+// SEGMENT PAINTER (Spin Wheel)
+// FIX #12: const constructor added
+// ===========================================================================
+class SegmentPainter extends CustomPainter {
+  final int index;
+  final int totalSegments;
+  final Color color;
+  final int coins;
+
+  const SegmentPainter({
+    required this.index,
+    required this.totalSegments,
+    required this.color,
+    required this.coins,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint fillPaint = Paint()..color = color;
+    final Paint borderPaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    final Offset center = Offset(size.width / 2, size.height / 2);
+    final double radius = size.width / 2;
+    final double anglePerSegment = 360 / totalSegments;
+    final double startAngle =
+        (index * anglePerSegment) * (pi / 180);
+    final double sweepAngle = anglePerSegment * (pi / 180);
+
+    final Rect rect =
+        Rect.fromCircle(center: center, radius: radius);
+
+    canvas.drawArc(rect, startAngle, sweepAngle, true, fillPaint);
+    canvas.drawArc(rect, startAngle, sweepAngle, true, borderPaint);
+
+    final double midAngle = startAngle + sweepAngle / 2;
+    final double textRadius = radius * 0.68;
+    final Offset textOffset = Offset(
+      center.dx + textRadius * cos(midAngle),
+      center.dy + textRadius * sin(midAngle),
+    );
+
+    final TextPainter textPainter = TextPainter(
+      text: TextSpan(
+        text: '$coins',
+        style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.bold),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    textPainter.paint(
+      canvas,
+      Offset(
+        textOffset.dx - textPainter.width / 2,
+        textOffset.dy - textPainter.height / 2,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(SegmentPainter oldDelegate) => false;
+}
+
+// ===========================================================================
+// QUIZ PAGE (List)
+// ===========================================================================
+class QuizPage extends StatefulWidget {
+  final Function(int) onCoinsEarned;
+
+  const QuizPage({Key? key, required this.onCoinsEarned}) : super(key: key);
+
+  @override
+  State<QuizPage> createState() => _QuizPageState();
+}
+
+class _QuizPageState extends State<QuizPage> {
+  final List<Quiz> quizzes = [
+    Quiz(
+      id: 1,
+      title: 'Quiz 1',
+      icon: '🧠',
+      color: Colors.blue,
+      rewardCoins: 25,
+      questions: [
+        Question(
+            text: 'Will rain affect an outdoor cricket game?',
+            options: ['Yes', 'No'],
+            correctAnswerIndex: 0),
+        Question(
+            text: 'Is Flutter a mobile framework?',
+            options: ['Yes', 'No'],
+            correctAnswerIndex: 0),
+      ],
+    ),
+    Quiz(
+      id: 2,
+      title: 'Quiz 2',
+      icon: '📚',
+      color: Colors.green,
+      rewardCoins: 30,
+      questions: [
+        Question(
+            text: 'What is 2 + 2?',
+            options: ['3', '4', '5'],
+            correctAnswerIndex: 1),
+        Question(
+            text: 'What is the capital of India?',
+            options: ['Mumbai', 'Delhi', 'Bangalore'],
+            correctAnswerIndex: 1),
+      ],
+    ),
+    Quiz(
+      id: 3,
+      title: 'Quiz 3',
+      icon: '🎯',
+      color: Colors.orange,
+      rewardCoins: 35,
+      questions: [
+        Question(
+            text: 'Is Dart a programming language?',
+            options: ['Yes', 'No'],
+            correctAnswerIndex: 0),
+        Question(
+            text: 'Flutter is made by?',
+            options: ['Apple', 'Google', 'Microsoft'],
+            correctAnswerIndex: 1),
+      ],
+    ),
+    Quiz(
+      id: 4,
+      title: 'Quiz 4',
+      icon: '⚡',
+      color: Colors.red,
+      rewardCoins: 40,
+      questions: [
+        Question(
+            text: 'Firebase is a backend-as-a-service?',
+            options: ['Yes', 'No'],
+            correctAnswerIndex: 0),
+        Question(
+            text: 'What year was Flutter first released?',
+            options: ['2015', '2017', '2019'],
+            correctAnswerIndex: 1),
+      ],
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Play Quizzes & Games'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: ListView.builder(
+          itemCount: quizzes.length * 2 - 1,
+          itemBuilder: (context, index) {
+            if (index.isOdd) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Container(
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      '📢 Native Ad Space',
+                      style: TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            final quizIndex = index ~/ 2;
+            final quiz = quizzes[quizIndex];
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => QuizDetailPage(
+                        quiz: quiz,
+                        onCoinsEarned: widget.onCoinsEarned),
+                  ),
+                ),
+                child: Card(
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          quiz.color.withOpacity(0.15),
+                          quiz.color.withOpacity(0.05)
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: quiz.color.withOpacity(0.3),
+                          width: 2),
+                    ),
+                    child: Row(
+                      children: [
+                        Text(quiz.icon,
+                            style:
+                                const TextStyle(fontSize: 48)),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                quiz.title,
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${quiz.questions.length} Questions',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey[600]),
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                padding:
+                                    const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: quiz.color
+                                      .withOpacity(0.3),
+                                  borderRadius:
+                                      BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'Win ${quiz.rewardCoins} Coins',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight:
+                                          FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios,
+                            size: 16, color: Colors.grey),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// QUIZ DETAIL PAGE
+// ===========================================================================
+class QuizDetailPage extends StatefulWidget {
+  final Quiz quiz;
+  final Function(int) onCoinsEarned;
+
+  const QuizDetailPage({
+    Key? key,
+    required this.quiz,
+    required this.onCoinsEarned,
+  }) : super(key: key);
+
+  @override
+  State<QuizDetailPage> createState() => _QuizDetailPageState();
+}
+
+class _QuizDetailPageState extends State<QuizDetailPage> {
+  int currentQuestionIndex = 0;
+  int score = 0;
+  bool quizFinished = false;
+  int? selectedAnswer;
+  bool answered = false;
+
+  void _answerQuestion(int idx) {
+    if (answered) return;
+    setState(() {
+      selectedAnswer = idx;
+      answered = true;
+      if (idx ==
+          widget.quiz.questions[currentQuestionIndex]
+              .correctAnswerIndex) {
+        score++;
+      }
+    });
+
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (!mounted) return; // FIX #1
+
+      if (currentQuestionIndex <
+          widget.quiz.questions.length - 1) {
+        setState(() {
+          currentQuestionIndex++;
+          selectedAnswer = null;
+          answered = false;
+        });
+      } else {
+        setState(() => quizFinished = true);
+        final int earned =
+            score == widget.quiz.questions.length
+                ? widget.quiz.rewardCoins
+                : 5;
+        widget.onCoinsEarned(earned);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // ---- Result Screen ----
+    if (quizFinished) {
+      final bool perfect =
+          score == widget.quiz.questions.length;
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.quiz.title),
+          backgroundColor: const Color(0xFF7C3AED),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  perfect ? '🏆' : '📝',
+                  style: const TextStyle(fontSize: 80),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Score: $score / ${widget.quiz.questions.length}',
+                  style: const TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  perfect
+                      ? '🎉 Perfect! You earned ${widget.quiz.rewardCoins} coins!'
+                      : 'You earned 5 coins.\nTry again for full reward!',
+                  style: const TextStyle(fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 32),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(50)),
+                  ),
+                  child: const Text(
+                    'Back to Quizzes',
+                    style: TextStyle(
+                        color: Colors.white, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ---- Question Screen ----
+    final question =
+        widget.quiz.questions[currentQuestionIndex];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.quiz.title),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: (currentQuestionIndex + 1) /
+                    widget.quiz.questions.length,
+                backgroundColor: Colors.grey[200],
+                color: const Color(0xFF7C3AED),
+                minHeight: 8,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Question ${currentQuestionIndex + 1} of ${widget.quiz.questions.length}',
+              style: TextStyle(
+                  color: Colors.grey[600], fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              question.text,
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 32),
+            ...List.generate(question.options.length, (idx) {
+              Color btnColor = const Color(0xFF7C3AED);
+              if (answered) {
+                if (idx == question.correctAnswerIndex) {
+                  btnColor = Colors.green;
+                } else if (idx == selectedAnswer) {
+                  btnColor = Colors.red;
+                }
+              }
+              return Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: answered
+                        ? null
+                        : () => _answerQuestion(idx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: btnColor,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12)),
+                    ),
+                    child: Text(
+                      question.options[idx],
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 16),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// COIN HISTORY PAGE
+// FIX #4: Sub-collection se fetch
+// FIX #7: Pagination — 20 at a time
+// FIX #13: Better empty state
+// ===========================================================================
+class CoinHistoryPage extends StatefulWidget {
+  final String userUID;
+
+  const CoinHistoryPage({Key? key, required this.userUID})
+      : super(key: key);
+
+  @override
+  State<CoinHistoryPage> createState() => _CoinHistoryPageState();
+}
+
+class _CoinHistoryPageState extends State<CoinHistoryPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final List<CoinHistory> _history = [];
+  DocumentSnapshot? _lastDoc;
+  bool _isLoading = false;
+  bool _hasMore = true;
+  static const int _pageSize = 20;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    if (_isLoading || !_hasMore) return;
+    if (mounted) setState(() => _isLoading = true);
+
+    try {
+      Query query = _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .collection('history')
+          .orderBy('timestamp', descending: true)
+          .limit(_pageSize);
+
+      if (_lastDoc != null) {
+        query = query.startAfterDocument(_lastDoc!);
+      }
+
+      final snapshot = await query.get();
+
+      if (!mounted) return; // FIX #1
+
+      if (snapshot.docs.isNotEmpty) {
+        _lastDoc = snapshot.docs.last;
+        final newItems = snapshot.docs
+            .map((d) => CoinHistory.fromMap(
+                d.data() as Map<String, dynamic>))
+            .toList();
+        setState(() {
+          _history.addAll(newItems);
+          _hasMore = snapshot.docs.length == _pageSize;
+        });
+      } else {
+        setState(() => _hasMore = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        Fluttertoast.showToast(msg: 'History load error: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  String _formatDate(DateTime dt) {
+    return '${dt.day.toString().padLeft(2, '0')}/'
+        '${dt.month.toString().padLeft(2, '0')}/'
+        '${dt.year}  '
+        '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Coin History'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: _history.isEmpty && _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _history.isEmpty && !_isLoading
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('🪙', style: TextStyle(fontSize: 60)),
+                      SizedBox(height: 16),
+                      Text(
+                        'Abhi tak koi transaction nahi!',
+                        style: TextStyle(
+                            fontSize: 16, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount:
+                      _history.length + (_hasMore ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == _history.length) {
+                      return Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _isLoading
+                            ? const Center(
+                                child:
+                                    CircularProgressIndicator())
+                            : ElevatedButton.icon(
+                                onPressed: _loadHistory,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      const Color(0xFF7C3AED),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(
+                                              12)),
+                                ),
+                                icon: const Icon(Icons.refresh,
+                                    color: Colors.white),
+                                label: const Text('Load More',
+                                    style: TextStyle(
+                                        color: Colors.white)),
+                              ),
+                      );
+                    }
+
+                    final item = _history[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 4),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12)),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Color(0xFFEDE9FE),
+                          child: Text('🪙',
+                              style: TextStyle(fontSize: 22)),
+                        ),
+                        title: Text(
+                          item.source,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                            _formatDate(item.timestamp)),
+                        trailing: Text(
+                          '+${item.amount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                              color: Colors.green,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
+}
+
+// ===========================================================================
+// REDEEM PAGE
+// FIX #11: SingleChildScrollView (overflow fix)
+// ===========================================================================
+class RedeemPage extends StatefulWidget {
+  final double currentBalance;
+  final String userUID;
+  final Function(double) onRedeem;
+
+  const RedeemPage({
+    Key? key,
+    required this.currentBalance,
+    required this.userUID,
+    required this.onRedeem,
+  }) : super(key: key);
+
+  @override
+  State<RedeemPage> createState() => _RedeemPageState();
+}
+
+class _RedeemPageState extends State<RedeemPage> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final TextEditingController _accountController =
+      TextEditingController();
+  String _selectedMethod = 'UPI';
+  bool _isSubmitting = false;
+
+  static const double _minRedeem = 500.0;
+
+  Future<void> _submitWithdrawal() async {
+    if (widget.currentBalance < _minRedeem) {
+      Fluttertoast.showToast(
+          msg:
+              'Minimum ₹${_minRedeem.toInt()} coins chahiye redeem karne ke liye!');
+      return;
+    }
+    if (_accountController.text.trim().isEmpty) {
+      Fluttertoast.showToast(msg: 'Account details fill karo!');
+      return;
+    }
+    if (_isSubmitting) return;
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      await _firestore.collection('withdrawals').add({
+        'userUID': widget.userUID,
+        'amount': double.parse(
+            widget.currentBalance.toStringAsFixed(2)),
+        'method': _selectedMethod,
+        'accountDetails': _accountController.text.trim(),
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await _firestore
+          .collection('users')
+          .doc(widget.userUID)
+          .update({
+        'coins': 0.0,
+        'totalWithdrawn':
+            FieldValue.increment(widget.currentBalance),
+      });
+
+      if (!mounted) return; // FIX #1
+
+      widget.onRedeem(widget.currentBalance);
+      Fluttertoast.showToast(
+        msg:
+            'Withdrawal request submit ho gayi! 🎉 24-48 ghante mein process hogi.',
+        toastLength: Toast.LENGTH_LONG,
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        Fluttertoast.showToast(msg: 'Withdrawal error: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Redeem Coins'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Card(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF7C3AED),
+                      Color(0xFF6D28D9)
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'Available Balance',
+                      style: TextStyle(
+                          color: Colors.white70, fontSize: 14),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '₹ ${widget.currentBalance.toStringAsFixed(2)} Coins',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      widget.currentBalance >= _minRedeem
+                          ? '✅ Redeem eligible!'
+                          : '⚠️ Minimum ₹${_minRedeem.toInt()} coins chahiye',
+                      style: TextStyle(
+                        color: widget.currentBalance >= _minRedeem
+                            ? Colors.greenAccent
+                            : Colors.orangeAccent,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            DropdownButtonFormField<String>(
+              value: _selectedMethod,
+              items: ['UPI', 'PayPal', 'Bank Transfer']
+                  .map((m) => DropdownMenuItem(
+                      value: m, child: Text(m)))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null)
+                  setState(() => _selectedMethod = v);
+              },
+              decoration: InputDecoration(
+                labelText: 'Withdrawal Method',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                prefixIcon:
+                    const Icon(Icons.account_balance_wallet),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            TextField(
+              controller: _accountController,
+              decoration: InputDecoration(
+                labelText: _selectedMethod == 'UPI'
+                    ? 'UPI ID (e.g. name@upi)'
+                    : _selectedMethod == 'PayPal'
+                        ? 'PayPal Email'
+                        : 'Bank Account Number',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                prefixIcon: const Icon(Icons.edit),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: Colors.orange.withOpacity(0.4)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Withdrawal 24-48 ghante mein process hogi. Minimum ₹500 coins.',
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.orange),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 32),
+
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed:
+                    (widget.currentBalance < _minRedeem ||
+                            _isSubmitting)
+                        ? null
+                        : _submitWithdrawal,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7C3AED),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Text(
+                        'Submit Withdrawal Request',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _accountController.dispose();
+    super.dispose();
+  }
+}
+
+// ===========================================================================
+// WITHDRAWALS ADMIN PAGE
+// FIX #10: Error handling + better empty state
+// ===========================================================================
+class WithdrawalsAdminPage extends StatelessWidget {
+  final String userUID;
+
+  const WithdrawalsAdminPage({Key? key, required this.userUID})
+      : super(key: key);
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'approved':
+        return Colors.green;
+      case 'rejected':
+        return Colors.red;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  String _statusIcon(String status) {
+    switch (status) {
+      case 'approved':
+        return '✅';
+      case 'rejected':
+        return '❌';
+      default:
+        return '⏳';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('My Withdrawals'),
+        backgroundColor: const Color(0xFF7C3AED),
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('withdrawals')
+            .where('userUID', isEqualTo: userUID)
+            .orderBy('createdAt', descending: true)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState ==
+              ConnectionState.waiting) {
+            return const Center(
+                child: CircularProgressIndicator());
+          }
+
+          // FIX #10: Error handling
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Error: ${snapshot.error}\n\nFirestore composite index create karo:\nwithdrawals collection mein userUID + createdAt ka index banao.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          if (!snapshot.hasData ||
+              snapshot.data!.docs.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('💸', style: TextStyle(fontSize: 60)),
+                  SizedBox(height: 16),
+                  Text(
+                    'Abhi tak koi withdrawal request nahi!',
+                    style: TextStyle(
+                        fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          final requests = snapshot.data!.docs
+              .map((d) => WithdrawalRequest.fromMap(
+                  d.data() as Map<String, dynamic>, d.id))
+              .toList();
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: requests.length,
+            itemBuilder: (context, index) {
+              final r = requests[index];
+              final color = _statusColor(r.status);
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        color.withOpacity(0.15),
+                    child: Text(
+                      _statusIcon(r.status),
+                      style:
+                          const TextStyle(fontSize: 22),
+                    ),
+                  ),
+                  title: Text(
+                    '₹ ${r.amount.toStringAsFixed(2)} via ${r.method}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    '${r.accountDetails}\n'
+                    '${r.createdAt.day.toString().padLeft(2, '0')}/'
+                    '${r.createdAt.month.toString().padLeft(2, '0')}/'
+                    '${r.createdAt.year}',
+                  ),
+                  trailing: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.12),
+                      borderRadius:
+                          BorderRadius.circular(20),
+                      border: Border.all(color: color),
+                    ),
+                    child: Text(
+                      r.status.toUpperCase(),
+                      style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
